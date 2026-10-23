@@ -661,20 +661,46 @@ def render(args, data, day, now, lang, scene, static):
 PRICE_URL = "https://openrouter.ai/api/v1/models"  # 公开接口，无需密钥，只拉价目表
 PRICE_CACHE = expand("~/.cache/token-receipt/openrouter-models.json")
 PRICE_TTL = 24 * 3600
+# 随仓库附带的价格快照（只含 PRICES 里的模型），离线时使用；用 --export-prices 重新生成
+SNAPSHOT = Path(__file__).resolve().parent / "prices" / "openrouter-snapshot.json"
+
+
+def snapshot_models():
+    if not SNAPSHOT.exists():
+        return None
+    data = json.loads(SNAPSHOT.read_text(encoding="utf-8"))
+    print(f"（离线：使用随仓库附带的价格快照，抓取于 {data.get('fetched_at', '未知')}）")
+    return data.get("models", [])
 
 
 def remote_models():
-    """OpenRouter 的模型价目表，本地缓存一天；联网失败返回 None，调用方退回本地表。"""
+    """OpenRouter 的模型价目表，本地缓存一天；联网失败时退回随仓库附带的快照，两者都没有则返回 None。"""
     if PRICE_CACHE.exists() and time.time() - PRICE_CACHE.stat().st_mtime < PRICE_TTL:
         return json.loads(PRICE_CACHE.read_text(encoding="utf-8"))
     try:
         with urllib.request.urlopen(PRICE_URL, timeout=15) as resp:
             models = json.load(resp).get("data", [])
     except (OSError, urllib.error.URLError, ValueError):
-        return None
+        return snapshot_models()
     PRICE_CACHE.parent.mkdir(parents=True, exist_ok=True)
     PRICE_CACHE.write_text(json.dumps(models), encoding="utf-8")
     return models
+
+
+def export_prices():
+    """把 PRICES 里每个模型在 OpenRouter 上的价格写成快照，随仓库一起发布。"""
+    models = remote_models()
+    if models is None:
+        raise SystemExit("无法访问 OpenRouter，也没有可用的快照，无法导出")
+    wanted = {or_id(k) for k in PRICES}
+    picked = [{"id": m["id"], "pricing": m.get("pricing", {})} for m in models if m.get("id") in wanted]
+    missing = sorted(wanted - {m["id"] for m in picked})
+    SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+    SNAPSHOT.write_text(json.dumps({"fetched_at": dt.date.today().isoformat(), "source": PRICE_URL, "models": picked},
+                                   ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"已写入 {SNAPSHOT}：{len(picked)} 个模型")
+    if missing:
+        print("OpenRouter 上没有：" + "、".join(missing))
 
 
 def or_id(model):
@@ -796,6 +822,7 @@ def main():
     ap.add_argument("--height", type=int, default=1300, help="PNG 视窗高度（像素），小票太长时调大")
     ap.add_argument("--price", nargs="+", metavar="MODEL", help="查询模型实际价格（OpenRouter 与本地表对照），不出小票")
     ap.add_argument("--check-prices", action="store_true", help="校对本地价目表与 OpenRouter，列出不一致的项")
+    ap.add_argument("--export-prices", action="store_true", help="把 PRICES 的 OpenRouter 价格写成快照 prices/openrouter-snapshot.json")
     ap.add_argument("--demo", action="store_true", help="用虚构的一天出小票（不读本机日志），用来预览场景与版式")
     args = ap.parse_args()
 
@@ -804,6 +831,9 @@ def main():
         return
     if args.check_prices:
         check_prices()
+        return
+    if args.export_prices:
+        export_prices()
         return
 
     if args.demo:

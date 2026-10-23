@@ -91,6 +91,7 @@ python3 receipt.py --check-prices
 | `--height PX` | PNG 视窗高度，缺省 1300，小票被截断时调大 |
 | `--price MODEL...` | 查询模型价格，不出小票 |
 | `--check-prices` | 列出本地价目表与 OpenRouter 不一致的项 |
+| `--export-prices` | 把计价模型的 OpenRouter 价格写成快照 `prices/openrouter-snapshot.json` |
 
 环境变量 `TOKEN_RECEIPT_CHROME` 可指定截图用的浏览器路径。
 
@@ -99,7 +100,9 @@ python3 receipt.py --check-prices
 金额是按 API 标价估算的，**订阅用户并不实际支付这些钱**。
 
 - 价格表是脚本里的 `PRICES`（美元 / 百万 token）。缓存写 5 分钟为输入价的 1.25 倍，1 小时为 2 倍，快速模式按表内倍数计。
-- OpenRouter 价目表缓存在 `~/.cache/token-receipt/openrouter-models.json`，一天刷新一次。删掉该文件即强制重新拉取。
+- 价格快照 `prices/openrouter-snapshot.json` 随仓库发布，记录了每个计价模型在 OpenRouter 上的价格（抓取日期写在文件里）。`--price` 和 `--check-prices` 联网失败时会使用它。
+- 联网时 OpenRouter 价目表缓存在 `~/.cache/token-receipt/openrouter-models.json`，一天刷新一次。删掉该文件即强制重新拉取。
+- 维护者用 `python3 receipt.py --export-prices` 重新生成快照。
 - 不在价格表里的模型只列 token，不计金额，小票上会标「—」。
 - WorkBuddy 没有公开单价，只列 token。
 
