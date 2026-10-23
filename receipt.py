@@ -40,7 +40,17 @@ PRICES = {
     "gpt-5.4": {"in": 2.5, "out": 15, "read": 0.25},
     "gpt-5.4-mini": {"in": 0.75, "out": 4.5, "read": 0.075},
     "gpt-5.3-codex": {"in": 1.75, "out": 14},
+    "gpt-5.2-codex": {"in": 1.75, "out": 14, "read": 0.175},
+    "gpt-5.1-codex-mini": {"in": 0.25, "out": 2, "read": 0.03},
+    "gpt-5.6-terra": {"in": 2, "out": 12, "read": 0.2},
+    "gpt-5.6-sol": {"in": 4, "out": 20, "read": 0.4},
+    "gpt-6-luna": {"in": 0.1, "out": 0.5, "read": 0.01},
+    "gpt-6.1-sol": {"in": 2, "out": 10, "read": 0.1},
+    "gpt-6-astra": {"in": 10, "out": 50, "read": 1},
+    "deepseek/deepseek-v4-pro": {"in": 0.95526, "out": 1.91052, "read": 0.079605},
 }
+# 2026-10-23 查询：Anthropic 与上表对照官方价目页一致；OpenAI、DeepSeek 取自 OpenRouter 价目表（与官方价或有出入）。
+# 未建模：OpenAI 超过 272k 输入的长上下文档位、Haiku 5.5 超过 100k 的档位。
 
 SOURCES = {
     "claude": "~/.claude/projects",
@@ -117,9 +127,10 @@ def lines(path):
 
 
 def price_of(model):
-    if model in PRICES:
-        return PRICES[model]
-    base = re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", model)
+    m = re.sub(r"^(claude-[a-z]+-\d+)\.(\d+)$", r"\1-\2", model)  # claude-sonnet-5.5 与 claude-sonnet-5-5 是同一个模型
+    if m in PRICES:
+        return PRICES[m]
+    base = re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", m)
     return PRICES.get(base)
 
 
@@ -307,11 +318,12 @@ def claude_parts(r):
     """一条 Claude 用量 → 各明细的 (名字, token 数, 每百万 token 价格)；查不到价格的模型价格为 None。"""
     p = price_of(r["model"])
     mult = (p.get("fast", 1) if r["fast"] else 1) if p else 1
+    anthropic = r["model"].startswith("claude-")
     return [("input", r["in"], p["in"] * mult if p else None),
             ("output", r["out"], p["out"] * mult if p else None),
             ("read", r["read"], (p.get("read", p["in"] * 0.1)) * mult if p else None),
-            ("write5", r["w5"], p["in"] * 1.25 * mult if p else None),
-            ("write1h", r["w1h"], p["in"] * 2 * mult if p else None)]
+            ("write5", r["w5"], p["in"] * 1.25 * mult if p and anthropic else None),
+            ("write1h", r["w1h"], p["in"] * 2 * mult if p and anthropic else None)]
 
 
 def codex_parts(r):
@@ -667,6 +679,8 @@ def remote_models():
 
 def or_id(model):
     """本地模型名 → OpenRouter 的 id：claude-opus-5-5 → anthropic/claude-opus-5.5，gpt-5.5 → openai/gpt-5.5。"""
+    if "/" in model:  # 已带厂商前缀，如 deepseek/deepseek-v4-pro
+        return model
     m = re.sub(r"-(\d{8}|\d{4}-\d{2}-\d{2})$", "", model)
     m = re.sub(r"^(claude-.+)-(\d+)-(\d+)$", r"anthropic/\1-\2.\3", m)
     if m.startswith("claude-"):
@@ -715,12 +729,12 @@ def show_prices(models_to_query):
         print(f"\n{model}  →  {rem['id'] if rem else or_id(model) + '（未找到）'}")
         print(f"  {'':<12}{'输入':>8}{'输出':>8}{'缓存读':>8}{'写5m':>8}{'写1h':>8}   $/百万 token")
         if rem:
-            print(f"  {'OpenRouter':<12}" + "".join(f"{fmt_p(rem[k]):>8}" for k in ("in", "out", "read", "w5", "w1h")))
+            print(f"  {'OpenRouter':<12}" + "".join(f"{fmt_p(rem[k]):>10}" for k in ("in", "out", "read", "w5", "w1h")))
             for o in rem["long"]:
                 print(f"  {'  长上下文':<12}输入 {fmt_p(per_m(o.get('prompt')))} · 输出 {fmt_p(per_m(o.get('completion')))}"
                       f"（prompt ≥ {o.get('min_prompt_tokens', 0):,} token 时）")
         if loc:
-            print(f"  {'本地表':<12}" + "".join(f"{fmt_p(loc[k]):>8}" for k in ("in", "out", "read", "w5", "w1h"))
+            print(f"  {'本地表':<12}" + "".join(f"{fmt_p(loc[k]):>10}" for k in ("in", "out", "read", "w5", "w1h"))
                   + (f"   快速模式 ×{loc['fast']}" if loc.get("fast") else ""))
         if rem and loc:
             diffs = [k for k in ("in", "out", "read") if rem[k] is not None and loc[k] is not None and abs(rem[k] - loc[k]) > 1e-9]
