@@ -276,9 +276,9 @@ class Section:
         self.priced = priced
         self.models, self.sids = {}, set()
 
-    def add(self, r, label, model, parts):
+    def add(self, r, label, model, parts, n=1):
         m = self.models.setdefault(model, {"label": label, "priced": True, "reqs": 0, "lines": {}})
-        m["reqs"] += 1
+        m["reqs"] += n
         if r.get("sid"):
             self.sids.add(r["sid"])
         if self.priced and any(rate is None for _, _, rate in parts):
@@ -303,6 +303,57 @@ class Section:
         return sum(m["reqs"] for m in self.models.values())
 
 
+def claude_parts(r):
+    """一条 Claude 用量 → 各明细的 (名字, token 数, 每百万 token 价格)；查不到价格的模型价格为 None。"""
+    p = price_of(r["model"])
+    mult = (p.get("fast", 1) if r["fast"] else 1) if p else 1
+    return [("input", r["in"], p["in"] * mult if p else None),
+            ("output", r["out"], p["out"] * mult if p else None),
+            ("read", r["read"], (p.get("read", p["in"] * 0.1)) * mult if p else None),
+            ("write5", r["w5"], p["in"] * 1.25 * mult if p else None),
+            ("write1h", r["w1h"], p["in"] * 2 * mult if p else None)]
+
+
+def codex_parts(r):
+    p = price_of(r["model"])
+    return [("input", r["in"], p["in"] if p else None),
+            ("read", r["read"], (p.get("read", p["in"] * 0.1)) if p else None),
+            ("output", r["out"], p["out"] if p else None)]
+
+
+# --demo 用的虚构数据：一个并不存在的工作日，只用来展示小票长什么样，不读任何本机日志
+DEMO_CLAUDE = [  # 模型, 请求数, 输入, 输出, 缓存读, 缓存写 5m, 缓存写 1h
+    ("claude-opus-5-5", 320, 800_000, 300_000, 40_000_000, 1_200_000, 900_000),
+    ("claude-sonnet-5-5", 510, 1_100_000, 380_000, 90_000_000, 1_400_000, 700_000),
+    ("claude-haiku-5-5", 40, 50_000, 30_000, 2_000_000, 0, 150_000),
+]
+DEMO_CODEX = [  # 模型, 请求数, 输入, 缓存读, 输出
+    ("gpt-5.5", 180, 900_000, 30_000_000, 200_000),
+    ("gpt-5.4-mini", 60, 300_000, 8_000_000, 90_000),
+]
+DEMO_WB = [("Hy4 preview", 200, 1_500_000, 20_000_000, 150_000)]  # 名字, 请求数, 输入, 缓存命中, 输出
+DEMO_DATE = dt.date(2026, 10, 23)
+
+
+def demo_data():
+    claude, codex, wb = Section(True), Section(True), Section(False)
+    for model, n, i, o, rd, w5, w1h in DEMO_CLAUDE:
+        r = {"model": model, "fast": False, "in": i, "out": o, "read": rd, "w5": w5, "w1h": w1h}
+        claude.add(r, model_label(model), model, claude_parts(r), n=n)
+    for model, n, i, rd, o in DEMO_CODEX:
+        codex.add({}, model, model, codex_parts({"model": model, "in": i, "read": rd, "out": o}), n=n)
+    for name, n, i, hit, o in DEMO_WB:
+        wb.add({}, name, name, [("input", i, 0), ("hit", hit, 0), ("output", o, 0)], n=n)
+    claude.sids.update(f"demo-c{k}" for k in range(14))
+    codex.sids.update(f"demo-x{k}" for k in range(19))
+    wb.sids.update(f"demo-w{k}" for k in range(5))
+    limits = {"five_hour": [{"t": 0, "reset_at": 0, "reset_text": h} for h in ("09:00", "14:00", "19:50")],
+              "seven_day": [{"t": 0, "reset_at": 0, "reset_text": "10-30 06:00"}]}
+    reset = dt.datetime(2026, 10, 30, 10, 50).timestamp()
+    quota = {"quota": [{"minutes": 10080, "used": 36, "reset_at": reset}]}
+    return {"claude": claude, "codex": codex, "wb": wb, "limits": limits, "codex_quota": quota}
+
+
 def build(day_start, day_end, since):
     claude_rows = []
     for p in jsonl_under([SOURCES["claude"]], since):
@@ -325,22 +376,11 @@ def build(day_start, day_end, since):
             typ = r["limit"] if r["limit"] in ("five_hour", "seven_day") else "other"
             limits.setdefault(typ, []).append(r)
             continue
-        p = price_of(r["model"])
-        mult = (p.get("fast", 1) if r["fast"] else 1) if p else 1
-        parts = [("input", r["in"], p["in"] * mult if p else None),
-                 ("output", r["out"], p["out"] * mult if p else None),
-                 ("read", r["read"], (p.get("read", p["in"] * 0.1)) * mult if p else None),
-                 ("write5", r["w5"], p["in"] * 1.25 * mult if p else None),
-                 ("write1h", r["w1h"], p["in"] * 2 * mult if p else None)]
-        claude.add(r, model_label(r["model"]), r["model"], parts)
+        claude.add(r, model_label(r["model"]), r["model"], claude_parts(r))
 
     codex = Section(True)
     for r in codex_usage:
-        p = price_of(r["model"])
-        parts = [("input", r["in"], p["in"] if p else None),
-                 ("read", r["read"], (p.get("read", p["in"] * 0.1)) if p else None),
-                 ("output", r["out"], p["out"] if p else None)]
-        codex.add(r, r["model"], r["model"], parts)
+        codex.add(r, r["model"], r["model"], codex_parts(r))
 
     wb = Section(False)
     for r in wb_rows:
@@ -742,6 +782,7 @@ def main():
     ap.add_argument("--height", type=int, default=1300, help="PNG 视窗高度（像素），小票太长时调大")
     ap.add_argument("--price", nargs="+", metavar="MODEL", help="查询模型实际价格（OpenRouter 与本地表对照），不出小票")
     ap.add_argument("--check-prices", action="store_true", help="校对本地价目表与 OpenRouter，列出不一致的项")
+    ap.add_argument("--demo", action="store_true", help="用虚构的一天出小票（不读本机日志），用来预览场景与版式")
     args = ap.parse_args()
 
     if args.price:
@@ -751,11 +792,14 @@ def main():
         check_prices()
         return
 
-    now = dt.datetime.now().astimezone()
-    day = dt.date.fromisoformat(args.date) if args.date else now.date()
-    day_start = dt.datetime.combine(day, dt.time()).astimezone().timestamp()
-    day_end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).astimezone().timestamp()
-    data = build(day_start, day_end, day_start)
+    if args.demo:
+        now, day, data = dt.datetime(2026, 10, 23, 18, 23).astimezone(), DEMO_DATE, demo_data()
+    else:
+        now = dt.datetime.now().astimezone()
+        day = dt.date.fromisoformat(args.date) if args.date else now.date()
+        day_start = dt.datetime.combine(day, dt.time()).astimezone().timestamp()
+        day_end = dt.datetime.combine(day + dt.timedelta(days=1), dt.time()).astimezone().timestamp()
+        data = build(day_start, day_end, day_start)
 
     out_dir = expand(args.out) if args.out else expand("~/Downloads")
     out_dir.mkdir(parents=True, exist_ok=True)

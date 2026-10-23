@@ -4,6 +4,40 @@
 
 A receipt for a day of AI coding usage: tokens by model (Claude Code, Codex, WorkBuddy), cache reads and writes, API-list-price estimates, and plan-limit hits. Outputs a self-contained static HTML page and a PNG screenshot. Chinese and English, six scenes.
 
+## 案例
+
+下面是 `--demo` 生成的一天虚构用量（不读取任何本机日志）。六种场景各一张，版面与真实输出一致：
+
+<p align="center">
+  <img src="docs/examples/token-receipt-2026-10-23-printer-zh.png" width="230" alt="热敏打印机">
+  <img src="docs/examples/token-receipt-2026-10-23-desk-zh.png" width="230" alt="木桌">
+  <img src="docs/examples/token-receipt-2026-10-23-cork-zh.png" width="230" alt="软木板">
+</p>
+<p align="center">打印机出纸 · 木桌 · 软木板</p>
+
+<p align="center">
+  <img src="docs/examples/token-receipt-2026-10-23-tape-zh.png" width="230" alt="手账胶带">
+  <img src="docs/examples/token-receipt-2026-10-23-clip-zh.png" width="230" alt="账单夹板">
+  <img src="docs/examples/token-receipt-2026-10-23-plain-zh.png" width="230" alt="纯净背景">
+</p>
+<p align="center">手账胶带 · 账单夹板 · 纯净背景</p>
+
+英文版（`--lang en`）：
+
+<p align="center">
+  <img src="docs/examples/token-receipt-2026-10-23-printer-en.png" width="230" alt="English receipt">
+</p>
+
+**怎么读这张小票**
+
+- 每个模型一栏：请求数，以及输入、输出、缓存读、缓存写的 token 数和按 API 标价折算的金额。
+- 「小计」是该来源的 token 与金额合计；「TOTAL TOKEN」「API equivalent」是全部来源的合计。
+- 「5 小时额度用满 × 3」表示当天 Claude Code 撞了 3 次 5 小时限额，后面的时间是各次的重置点。
+- 「Weekly limit used 36%」是 Codex 记录的周额度占用，以及下一次重置的时间。
+- 标「not priced」的 WorkBuddy 没有公开单价，只列 token。
+
+运行 `python3 receipt.py --demo --lang all --scene all` 可以在自己机器上生成这十二份样例。
+
 ## 特点
 
 - **只读本机**：读取 `~/.claude/projects`、`~/.codex/sessions`、`~/.workbuddy/projects` 下的会话记录，只取 token 数、模型名、时间和额度信息，不保存提问与回答。
@@ -27,6 +61,9 @@ git clone https://github.com/2562771185/token-receipt.git
 ```bash
 # 今天的小票（中文，打印机场景），输出到 ~/Downloads
 python3 receipt.py
+
+# 不读日志，用虚构的一天预览全部场景
+python3 receipt.py --demo --lang all --scene all
 
 # 指定日期，中英文 × 六种场景，共 12 份
 python3 receipt.py --date 2026-10-22 --lang all --scene all
